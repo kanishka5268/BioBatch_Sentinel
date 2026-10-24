@@ -1,0 +1,6 @@
+FROM python:3.12-slim
+RUN useradd --create-home --uid 1000 executor
+WORKDIR /opt/executor
+COPY executor/worker.py /opt/executor/worker.py
+ENV PYTHONUNBUFFERED=1
+CMD ["python", "/opt/executor/worker.py"]

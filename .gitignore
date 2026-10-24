@@ -6,3 +6,4 @@ inputs/*
 !inputs/.gitkeep
 __pycache__/
 *.pyc
+*.backup

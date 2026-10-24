@@ -1,0 +1,47 @@
+{
+  "seed": 0,
+  "passed": true,
+  "gate_seconds": 1.35,
+  "tasks": [
+    {
+      "task": "sensor_calibration",
+      "difficulty": "easy",
+      "oracle": 1.0,
+      "noop": 0.0,
+      "oracle_ok": true,
+      "noop_ok": true
+    },
+    {
+      "task": "ph_alarm",
+      "difficulty": "easy",
+      "oracle": 1.0,
+      "noop": 0.0,
+      "oracle_ok": true,
+      "noop_ok": true
+    },
+    {
+      "task": "do_trend",
+      "difficulty": "medium",
+      "oracle": 1.0,
+      "noop": 0.0,
+      "oracle_ok": true,
+      "noop_ok": true
+    },
+    {
+      "task": "contamination_signal",
+      "difficulty": "medium",
+      "oracle": 1.0,
+      "noop": 0.0,
+      "oracle_ok": true,
+      "noop_ok": true
+    },
+    {
+      "task": "recovery_action",
+      "difficulty": "medium",
+      "oracle": 1.0,
+      "noop": 0.0,
+      "oracle_ok": true,
+      "noop_ok": true
+    }
+  ]
+}

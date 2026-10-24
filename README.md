@@ -1,194 +1,173 @@
-# RL Environment Template
 
-A small, working example of the run contract for the hackathon. It has five tiny coding tasks, a verifier, a reference-solution check, a no-op check, and a model loop that talks to any model through an OpenAI-compatible endpoint.
+# BioBatch Sentinel
 
-**Your environment must follow the same contract.** Judges will clone your repo's `main` branch, add a model and key, run **one command**, and watch what happens. Use this repo as a starting point for the layout, the harness and the logging.
+**A tool-using RL environment for synthetic bio-monitoring code tasks.**
 
-> This is a minimal starting point that shows the contract. It is not a hardened environment: strengthening your own isolation, verifier and error handling is part of the challenge.
+BioBatch Sentinel evaluates whether an AI agent can inspect a Python project, modify code, validate its changes, and complete tasks successfully. It provides deterministic task setup, programmatic verification, reference-solution and no-op baselines, reward scoring, structured telemetry, and Docker-based execution.
 
+The tasks are synthetic software exercises inspired by sensor and process-monitoring concepts. They are not intended for real-world process control.
 
+## Demo Task
 
-## Quick start
+### `sensor_calibration` — Easy
 
-You need Linux, macOS or WSL with Docker and Docker Compose v2. Nothing else.
+Implement `sensors.calibrate_reading(raw, offset, scale)` by subtracting the offset from the raw reading before multiplying by the scale.
 
-```bash
-cp .env.example .env          # 1. create your config
-# edit .env: set MODEL, API_KEY and BASE_URL (skip this to try the offline demo)
-docker compose up --build --abort-on-container-exit --exit-code-from harness   # 2. run everything
-```
-
-With the default `MODEL=mock/solver` it runs offline with no API key, so you can see the whole flow first.
-
-## Calling the model
-
-Your model name, API key and base URL arrive in the API key email. Every model is called the same way, through an OpenAI-compatible client:
+**Expected behavior:**
 
 ```python
-import openai
-
-client = openai.OpenAI(
-    api_key="api_key",
-    base_url="base_url"
-)
-
-# Example with text only
-response = client.chat.completions.create(
-    model="model_name",
-    messages=[
-        {
-            "role": "user",
-            "content": "Hi, How are you?"
-        }
-    ]
-)
-
-print(response)
+calibrated = (raw - offset) * scale
 ```
 
-In this template the three values come from environment variables, so nothing is hard-coded: `API_KEY`, `BASE_URL` and `MODEL` in your `.env`. The harness (`harness/agents.py`) makes the same call, with your tools added. To check your credentials before anything else:
+## Task Suite
+
+| Task | Difficulty | Objective |
+|---|---|---|
+| `sensor_calibration` | Easy | Subtract offset, then multiply by scale |
+| `ph_alarm` | Easy | Apply strict out-of-range boundary checks |
+| `do_trend` | Medium | Average valid dissolved-oxygen values, ignoring `None` |
+| `contamination_signal` | Medium | Apply an inclusive threshold |
+| `recovery_action` | Medium | Apply ordered action-priority rules |
+
+## Architecture
+
+BioBatch Sentinel consists of the following components:
+
+- **Harness:** Coordinates model calls, episode execution, tool actions, verification, rewards, and logs.
+- **Sandbox Control Service:** Manages task resets, workspace operations, and tool routing.
+- **Executor Worker:** Executes submitted Python snippets in a separate container configured with `network_mode: none`.
+- **Verifier:** Uses programmatic checks and regression tests rather than an LLM judge.
+- **Telemetry:** Records model inputs and outputs, parsed actions, tool results, errors, state hashes, rewards, and episode termination.
+
+The executor's network restriction is a defense-in-depth measure, not a guarantee of perfect security isolation.
+
+## Getting Started
+
+### Prerequisites
+
+- Docker Desktop with WSL2 on Windows, or Docker on Linux/macOS
+- Docker Compose v2
+- Model configuration and credentials supplied for the hackathon
+- Git (optional, for version control)
+
+### 1. Configure the Environment
+
+Create a local configuration file from the example:
 
 ```bash
-API_KEY=... BASE_URL=... MODEL=... python check_model.py
+cp .env.example .env
 ```
 
-When judges run your repo they change only these values (and the task), so your environment must work whichever model they plug in.
+On Windows Command Prompt, use:
 
-## What one command does
-
-```
-docker compose up --build ...
-        |
-        |-- builds both images, starts the sandbox
-        v
- 1. ORACLE check   reference solution runs through the environment      must score >= 0.95
- 2. NO-OP check    an agent that gives up immediately                   must score <= 0.05
-        |   if either fails: stop, the model is never called
-        v
- 3. MODEL run      your chosen model works on the task                  clock starts at its first request
-        |
-        v
- logs/<run-id>/    gate.jsonl, gate.json, episode.jsonl, summary.json
+```cmd
+copy .env.example .env
 ```
 
-Nothing is run separately. Build, both checks and the model run all happen from the single command.
+Edit `.env` with the model settings supplied for the hackathon.
 
-## The contract
+**Security note:** Keep real credentials in `.env`. Never commit API keys or other secrets to version control or include them in submission archives.
 
+### 2. Build and Launch the Environment
 
-|                                |                                                                                                                                                                              |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Command**                    | `docker compose up --build --abort-on-container-exit --exit-code-from harness`                                                                                               |
-| **Config** (`.env`)            | `MODEL`, `API_KEY`, `BASE_URL`, `TASK_ID`, `SEED`, `MODE`, optional `MAX_TOKENS`                                                                                             |
-| **Extra instructions**         | a text file in `inputs/` named by `APPEND_FILE` in `.env` (default `inputs/append.txt`), added to the system prompt exactly as written. See [Extra instructions](#extra-instructions)                                                                                             |
-| **Modes** (`MODE`)             | `full` (default): checks, then the model on `TASK_ID`. `all`: checks for every task, then the model on every task in turn. `baselines`: checks for every task, no model call |
-| **Outputs** (`logs/<run-id>/`) | `gate.jsonl` and `gate.json` (baseline checks), `episode.jsonl` (one line per step; `episode-<task>.jsonl` per task with `MODE=all`), `summary.json`                         |
-| **Exit code**                  | `0` finished, `1` crash, `2` a baseline check failed, `3` bad configuration                                                                                                  |
-
-
-
-
-### Limits used in the live run
-
-
-| Limit                | Value                                                                                                                        |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| Build                | 3 minutes from a fresh clone with an empty Docker cache                                                                      |
-| Baseline checks      | 2 minutes for the oracle and no-op checks on the chosen task (printed and saved as `gate_seconds` in `gate.json`)            |
-| Time per model run   | 10 minutes, starting at the first model request (build and baseline checks are not counted)                                  |
-| Steps                | 40. **One step is one model reply**, however many tool calls it holds                                                        |
-| Tool calls per reply | 10. Extra calls are not run and get an error back                                                                            |
-| Unreadable replies   | An unreadable or tool-less reply still uses a step. The agent gets a clear error and the run continues                       |
-| Tool output          | cut at 4,000 characters                                                                                                      |
-| Context              | trimmed by the harness so the conversation stays under about 48K tokens; a provider context-overflow error counts as a crash |
-
-
-
-
-## Layout
-
-```
-docker-compose.yml        two services: sandbox (no internet) and harness
-Dockerfile.sandbox        image for the sandbox
-Dockerfile.harness        image for the harness
-check_model.py            one-message connectivity check for your credentials
-sandbox/server.py         runs the agent's tools in an isolated workspace
-harness/run.py            entry point: oracle, then no-op, then the model
-harness/runner.py         step loop, limits, context trimming, telemetry
-harness/env.py            reset / step / score (the verifier lives here)
-harness/tasks.py          the tasks, with hidden checks and a reference solution
-harness/tools.py          tool schemas shown to the model
-harness/agents.py         OpenAI-compatible client, offline mock models, baselines
-```
-
-The verifier's expected answers and reward code live in the harness container. The agent only ever touches the sandbox container, which has no internet access.
-
-## Try it
+Run the required command from the project root:
 
 ```bash
-# offline demo: the reference-solution mock solves the task
 docker compose up --build --abort-on-container-exit --exit-code-from harness
-
-# an agent that does nothing (should end as a failure with reward 0)
-MODEL=mock/idle docker compose up --build --abort-on-container-exit --exit-code-from harness
-
-# run every task's baseline checks without a model: use this for your baseline results
-MODE=baselines docker compose up --build --abort-on-container-exit --exit-code-from harness
-
-# the model on every task, one after another, ignores TASK_ID (each gets its own 40 steps and 10 minutes)
-MODE=all docker compose up --build --abort-on-container-exit --exit-code-from harness
-
-# a different task or seed
-TASK_ID=bulk_discount SEED=7 docker compose up --build --abort-on-container-exit --exit-code-from harness
 ```
 
-Variables can be set in `.env` or on the command line as above.
+The harness runs baseline checks before model evaluation. If a baseline fails, the model run should not proceed.
 
-## Extra instructions
+## Testing
 
-In Run B the judges add an instructions file to the system prompt, the same file for every team. Its contents aren't disclosed. To check that your harness picks up such a file:
+### Run Baseline Checks
+
+Validate the reference solutions and no-op baselines across the complete task suite:
 
 ```bash
-# 1. put the instructions in a file under inputs/
-echo "Explain your plan in one line before each tool call." > inputs/extra.txt
-# 2. name it in .env (or on the command line), then run as usual. No rebuild is needed.
-APPEND_FILE=inputs/extra.txt docker compose up --build --abort-on-container-exit --exit-code-from harness
+docker compose run --build --rm -e MODE=baselines harness
 ```
 
-The terminal shows which file was loaded with its size and hash, and the run saves a copy as `logs/<run-id>/append.txt`. `summary.json` records it under `append`, and every step's `model_input` contains the full system prompt. A named file that is missing, empty or not UTF-8 stops the run with exit code 3. Your harness must add the file unchanged and must not special-case it.
-
-## Keeping the build fast
-
-The build and both checks must fit in 5 minutes on the judges' machine (3 for the build, 2 for the checks), and the judges' network may be slower than yours. This template builds in under a minute from an empty cache. To check yours the way judges will see it:
+### Run the Model Across All Tasks
 
 ```bash
-docker builder prune -af && time docker compose build --no-cache
+docker compose run --build --rm -e MODE=all harness
 ```
 
-- Pin every dependency to an exact version in `requirements.txt`, including transitive ones. `>=` can pull a new major version on the day.
-- Install only what the environment needs. Avoid large toolchains (CUDA, full `build-essential`, browsers you don't use), model weights and datasets downloaded at build time. Ship small fixed data in the repo instead.
-- Prefer `-slim` base images and packages with prebuilt wheels. Compiling from source is the usual cause of a slow build.
-- Nothing may be downloaded at run time: the sandbox has no internet.
+### Test the Demo Task with a No-Op Agent
 
+```bash
+docker compose run --build --rm -e MODEL=mock/idle harness
+```
 
+Inspect the generated `logs/` directories for baseline results, episode telemetry, errors, and evaluation summaries.
 
-## Make it your own
+## Baselines and Reward Scoring
 
-1. Replace the tasks in `harness/tasks.py`. A task builds from a seed and provides the starting files, hidden checks and a **reference solution**. `bulk_discount` shows how a seed can generate a different variant each time.
-2. Keep both baselines honest. The reference solution must score at least 0.95 and the no-op agent at most 0.05 on **every** task. The run stops before the model is called if either check fails, which is how a leaky verifier gets caught early. (While building this template, the no-op check flagged one of its own tasks that paid out for doing nothing.)
-3. Change the tools in `harness/tools.py` and `sandbox/server.py`, and the scoring in `harness/env.py::Env.score`.
-4. Run `MODE=baselines` and keep `logs/<run-id>/gate.json`; it goes in your submission zip as your baseline results.
-5. Run the model a few times, and keep the logs from at least 3 runs for your zip. `MODE=all` is a quick way to see that every task holds up, since judges may pick any of them for Run B.
+Each task includes a reference solution and a no-op baseline.
 
+The baseline gate requires:
 
+| Baseline | Required Score |
+|---|---:|
+| Reference solution (oracle) | At least `0.95` |
+| No-op baseline | At most `0.05` |
 
-## Submitting
+### Recorded Results
 
-Judges run everything from a clone of your repo's `main` branch, so what matters is what is in the repo. The zip you upload is reference material only (baseline results, test-run logs, sample trajectories, design doc and deck). See the problem statement for the exact list and deadline.
+The recorded baseline gate passed for all five tasks.
 
-## Notes
+| Metric | Recorded Result |
+|---|---:|
+| Reference solution scores | `1.00` on all five tasks |
+| No-op baseline scores | `0.00` on all five tasks |
+| Full model run | All five tasks solved |
+| Full model mean reward | `1.00` |
+| Separate no-op model run | Terminated unsuccessfully with reward `0.00` |
 
-- Your GPT-Luna key is for testing your environment only. It can't be used for anything else.
-- Never commit API keys. `.env` is ignored by git.
-- If your environment needs an LLM of its own, you must bring your own setup for it.
+These are recorded test results, not a guarantee that every model or future run will achieve the same performance.
 
+## Submission Evidence
+
+The reference-material package contains the following artifacts:
+
+- `baseline-results/gate.json` — Recorded baseline gate results
+- `test-run-logs/` — Test execution logs
+- `sample-trajectories/` — Sample agent trajectories
+- `design-doc.pdf` — Design documentation
+- `deck.pdf` — Project presentation
+
+## Configuration and Security
+
+- `.env.example` contains configuration placeholders.
+- `.env` contains local configuration and must not be committed.
+- API keys and other credentials must not appear in source code, logs, or submission archives.
+- The verifier and reward logic must remain inaccessible to the agent's code execution.
+- The executor is configured without network access; verify the Docker configuration before submission.
+- The executor's network restriction is a defense-in-depth measure and does not guarantee complete isolation.
+
+## Project Structure
+
+```text
+.
+├── Dockerfile.harness
+├── Dockerfile.sandbox
+├── Dockerfile.executor
+├── docker-compose.yml
+├── executor/
+├── harness/
+├── sandbox/
+├── inputs/
+├── baseline-results/
+├── test-run-logs/
+├── sample-trajectories/
+├── design-doc.pdf
+├── deck.pdf
+└── README.md
+```
+
+## Overview
+
+BioBatch Sentinel is built on the hackathon's RL environment template and extends it with a custom five-task suite and a separate network-restricted executor.
+
+The project provides a reproducible environment for evaluating whether AI agents can use tools to inspect code, implement solutions, validate behavior, and complete synthetic software tasks under programmatic verification.

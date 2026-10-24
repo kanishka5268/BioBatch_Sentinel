@@ -1,36 +1,51 @@
-# One command builds everything and runs the whole flow:
-#
-#   docker compose up --build --abort-on-container-exit --exit-code-from harness
-#
-# Inside the harness container the order is: oracle check -> no-op check -> model run.
-
 name: rl-env-template
-
 services:
-  sandbox:                       # where the agent's tools run
+  executor:
+    build:
+      context: .
+      dockerfile: Dockerfile.executor
+    network_mode: none
+    user: "0:0"
+    init: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, SETUID, SETGID, KILL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    mem_limit: 512m
+    volumes: [workspace:/workspace, exec_queue:/queue]
+    restart: unless-stopped
+
+  sandbox:
     build:
       context: .
       dockerfile: Dockerfile.sandbox
-    networks: [isolated]         # internal network only: no internet access
-    init: true                   # forwards SIGTERM so the sandbox stops at once instead of being killed after 10s
+    networks: [isolated]
+    depends_on: [executor]
+    init: true
     cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE]
     security_opt: ["no-new-privileges:true"]
     pids_limit: 256
     mem_limit: 512m
+    volumes: [workspace:/workspace, exec_queue:/queue]
+    environment:
+      WORKSPACE_DIR: /workspace
+      QUEUE_DIR: /queue
+      PORT: "8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 2s
       timeout: 3s
       retries: 30
 
-  harness:                       # verifier, baselines and the model loop
+  harness:
     build:
       context: .
       dockerfile: Dockerfile.harness
     depends_on:
       sandbox:
         condition: service_healthy
-    networks: [isolated, internet]   # can reach the sandbox and the model API
+    networks: [isolated, internet]
     environment:
       MODEL: ${MODEL:-mock/solver}
       API_KEY: ${API_KEY:-}
@@ -45,7 +60,10 @@ services:
       - ./logs:/app/logs
       - ./inputs:/app/inputs:ro
 
+volumes:
+  workspace:
+  exec_queue:
 networks:
   isolated:
-    internal: true               # no route to the internet
+    internal: true
   internet: {}
